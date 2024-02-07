@@ -117,8 +117,8 @@ spec:
         volumeMounts:
         - mountPath: /var/run/linkerd/config
           name: config
-        - mountPath: /var/run/linkerd/identity/trust-roots
-          name: trust-roots
+        - name: trust-roots
+          mountPath: /var/run/linkerd/identity/trust-roots
         - mountPath: /var/run/linkerd/tls
           name: tls
           readOnly: true
@@ -150,8 +150,11 @@ spec:
       - configMap:
           name: linkerd-config
         name: config
-      - configMap:
-          name: linkerd-identity-trust-roots
+      - secret:
+          secretName: linkerd-trust-anchor-roots
+          items:
+            - key: ca.crt
+              path: ca-bundle.crt
         name: trust-roots
       - name: tls
         secret:
