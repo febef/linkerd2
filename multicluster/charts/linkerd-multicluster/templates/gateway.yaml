@@ -18,6 +18,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: {{.Values.gateway.replicas}}
+  revisionHistoryLimit: {{.Values.revisionHistoryLimit}}
   selector:
     matchLabels:
       app: {{.Values.gateway.name}}
@@ -124,6 +125,9 @@ spec:
   selector:
     app: {{.Values.gateway.name}}
   type: {{ .Values.gateway.serviceType }}
+{{- if .Values.gateway.loadBalancerClass }}
+  loadBalancerClass: {{ .Values.gateway.loadBalancerClass }}
+{{- end }}
 {{- if .Values.gateway.loadBalancerIP }}
   loadBalancerIP: {{ .Values.gateway.loadBalancerIP }}
 {{- end }}

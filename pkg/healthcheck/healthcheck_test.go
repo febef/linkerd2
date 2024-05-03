@@ -1715,105 +1715,6 @@ func TestServicesAnnotations(t *testing.T) {
 	})
 }
 
-func getWebhookAndKubeSystemNamespace(nsLabel string, failurePolicy string) []string {
-	return []string{fmt.Sprintf(`
-apiVersion: v1
-kind: Namespace
-metadata:
-  creationTimestamp: null
-  labels:
-    %s
-  name: kube-system`, nsLabel),
-		fmt.Sprintf(`
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: linkerd-proxy-injector-webhook-config
-  labels:
-    linkerd.io/control-plane-component: proxy-injector
-    linkerd.io/control-plane-ns: linkerd
-webhooks:
-- name: linkerd-proxy-injector.linkerd.io
-  namespaceSelector:
-    matchExpressions:
-    - key: config.linkerd.io/admission-webhooks
-      operator: NotIn
-      values:
-      - disabled
-  clientConfig:
-    service:
-      name: linkerd-proxy-injector
-      namespace: linkerd
-      path: "/"
-    caBundle: cHJveHkgaW5qZWN0b3IgQ0EgYnVuZGxl
-  failurePolicy: %s
-  rules:
-  - operations: [ "CREATE" ]
-    apiGroups: [""]
-    apiVersions: ["v1"]
-    resources: ["pods"]
-  sideEffects: None`, failurePolicy),
-	}
-}
-
-func TestKubeSystemNamespaceInHA(t *testing.T) {
-	testCases := []struct {
-		testDescription string
-		k8sConfigs      []string
-		expectedOutput  string
-	}{
-		{
-			"passes when webhook policy is Ignore is not enabled",
-			getWebhookAndKubeSystemNamespace("", "Ignore"),
-			"",
-		},
-		{
-			"passes when webhook policy is Fail and namespace has required metadata",
-			getWebhookAndKubeSystemNamespace("config.linkerd.io/admission-webhooks: disabled", "Fail"),
-			"l5d-injection-disabled pod injection disabled on kube-system",
-		},
-		{
-			"fails when webhook policy is Fail and admission hooks are enabled",
-			getWebhookAndKubeSystemNamespace("config.linkerd.io/admission-webhooks: enabled", "Fail"),
-			"l5d-injection-disabled pod injection disabled on kube-system: kube-system namespace needs to have the label config.linkerd.io/admission-webhooks: disabled if injector webhook failure policy is Fail",
-		},
-		{
-			"fails when webhook policy is Fail and metadata is missing",
-			getWebhookAndKubeSystemNamespace("", "Fail"),
-			"l5d-injection-disabled pod injection disabled on kube-system: kube-system namespace needs to have the label config.linkerd.io/admission-webhooks: disabled if injector webhook failure policy is Fail",
-		},
-	}
-
-	for _, tc := range testCases {
-		tc := tc // pin
-		t.Run(tc.testDescription, func(t *testing.T) {
-
-			hc := NewHealthChecker([]CategoryID{}, &Options{})
-			hc.ControlPlaneNamespace = "linkerd"
-
-			hc.kubeAPI, _ = k8s.NewFakeAPI(tc.k8sConfigs...)
-			hc.addCheckAsCategory("l5d-injection-disabled", LinkerdHAChecks, "pod injection disabled on kube-system")
-
-			obs := newObserver()
-			hc.RunChecks(obs.resultFn)
-
-			if tc.expectedOutput == "" {
-				if len(obs.results) != 0 {
-					t.Fatalf("Expected not output, but got %v", obs.results)
-				}
-			} else {
-				expectedResults := []string{
-					tc.expectedOutput,
-				}
-				if diff := deep.Equal(obs.results, expectedResults); diff != nil {
-					t.Fatalf("%+v", diff)
-				}
-			}
-		})
-	}
-
-}
-
 func TestFetchCurrentConfiguration(t *testing.T) {
 	defaultValues, err := linkerd2.NewValues()
 
@@ -1837,7 +1738,7 @@ data:
   global: |
     {"linkerdNamespace":"linkerd","cniEnabled":false,"version":"install-control-plane-version","identityContext":{"trustDomain":"cluster.local","trustAnchorsPem":"fake-trust-anchors-pem","issuanceLifetime":"86400s","clockSkewAllowance":"20s"}}
   proxy: |
-    {"proxyImage":{"imageName":"cr.l5d.io/linkerd/proxy","pullPolicy":"IfNotPresent"},"proxyInitImage":{"imageName":"cr.l5d.io/linkerd/proxy-init","pullPolicy":"IfNotPresent"},"controlPort":{"port":4190},"ignoreInboundPorts":[],"ignoreOutboundPorts":[],"inboundPort":{"port":4143},"adminPort":{"port":4191},"outboundPort":{"port":4140},"resource":{"requestCpu":"","requestMemory":"","limitCpu":"","limitMemory":""},"proxyUid":"2102","logLevel":{"level":"warn,linkerd=info"},"disableExternalProfiles":true,"proxyVersion":"install-proxy-version","proxy_init_image_version":"v2.2.4","debugImage":{"imageName":"cr.l5d.io/linkerd/debug","pullPolicy":"IfNotPresent"},"debugImageVersion":"install-debug-version"}
+    {"proxyImage":{"imageName":"cr.l5d.io/linkerd/proxy","pullPolicy":"IfNotPresent"},"proxyInitImage":{"imageName":"cr.l5d.io/linkerd/proxy-init","pullPolicy":"IfNotPresent"},"controlPort":{"port":4190},"ignoreInboundPorts":[],"ignoreOutboundPorts":[],"inboundPort":{"port":4143},"adminPort":{"port":4191},"outboundPort":{"port":4140},"resource":{"requestCpu":"","requestMemory":"","limitCpu":"","limitMemory":""},"proxyUid":"2102","logLevel":{"level":"warn,linkerd=info"},"disableExternalProfiles":true,"proxyVersion":"install-proxy-version","proxy_init_image_version":"v2.3.0","debugImage":{"imageName":"cr.l5d.io/linkerd/debug","pullPolicy":"IfNotPresent"},"debugImageVersion":"install-debug-version"}
   install: |
     {"cliVersion":"dev-undefined","flags":[]}
   values: |
@@ -1990,7 +1891,7 @@ data:
   global: |
     {"linkerdNamespace":"linkerd","cniEnabled":false,"version":"install-control-plane-version","identityContext":{"trustDomain":"cluster.local","trustAnchorsPem":"fake-trust-anchors-pem","issuanceLifetime":"86400s","clockSkewAllowance":"20s"}}
   proxy: |
-    {"proxyImage":{"imageName":"cr.l5d.io/linkerd/proxy","pullPolicy":"IfNotPresent"},"proxyInitImage":{"imageName":"cr.l5d.io/linkerd/proxy-init","pullPolicy":"IfNotPresent"},"controlPort":{"port":4190},"ignoreInboundPorts":[],"ignoreOutboundPorts":[],"inboundPort":{"port":4143},"adminPort":{"port":4191},"outboundPort":{"port":4140},"resource":{"requestCpu":"","requestMemory":"","limitCpu":"","limitMemory":""},"proxyUid":"2102","logLevel":{"level":"warn,linkerd=info"},"disableExternalProfiles":true,"proxyVersion":"install-proxy-version","proxy_init_image_version":"v2.2.4","debugImage":{"imageName":"cr.l5d.io/linkerd/debug","pullPolicy":"IfNotPresent"},"debugImageVersion":"install-debug-version"}
+    {"proxyImage":{"imageName":"cr.l5d.io/linkerd/proxy","pullPolicy":"IfNotPresent"},"proxyInitImage":{"imageName":"cr.l5d.io/linkerd/proxy-init","pullPolicy":"IfNotPresent"},"controlPort":{"port":4190},"ignoreInboundPorts":[],"ignoreOutboundPorts":[],"inboundPort":{"port":4143},"adminPort":{"port":4191},"outboundPort":{"port":4140},"resource":{"requestCpu":"","requestMemory":"","limitCpu":"","limitMemory":""},"proxyUid":"2102","logLevel":{"level":"warn,linkerd=info"},"disableExternalProfiles":true,"proxyVersion":"install-proxy-version","proxy_init_image_version":"v2.3.0","debugImage":{"imageName":"cr.l5d.io/linkerd/debug","pullPolicy":"IfNotPresent"},"debugImageVersion":"install-debug-version"}
   install: |
     {"cliVersion":"dev-undefined","flags":[]}
   values: |
@@ -2495,7 +2396,7 @@ spec:
       serviceAccountName: linkerd-cni
       containers:
       - name: install-cni
-        image: cr.l5d.io/linkerd/cni-plugin:v1.3.0
+        image: cr.l5d.io/linkerd/cni-plugin:v1.5.0
         env:
         - name: DEST_CNI_NET_DIR
           valueFrom:

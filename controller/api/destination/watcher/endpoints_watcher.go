@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	ewv1alpha1 "github.com/linkerd/linkerd2/controller/gen/apis/externalworkload/v1alpha1"
+	ewv1beta1 "github.com/linkerd/linkerd2/controller/gen/apis/externalworkload/v1beta1"
 	"github.com/linkerd/linkerd2/controller/gen/apis/server/v1beta2"
 	"github.com/linkerd/linkerd2/controller/k8s"
 	consts "github.com/linkerd/linkerd2/pkg/k8s"
@@ -49,7 +49,7 @@ type (
 		IP                string
 		Port              Port
 		Pod               *corev1.Pod
-		ExternalWorkload  *ewv1alpha1.ExternalWorkload
+		ExternalWorkload  *ewv1beta1.ExternalWorkload
 		OwnerName         string
 		OwnerKind         string
 		Identity          string
@@ -60,6 +60,12 @@ type (
 	}
 
 	// AddressSet is a set of Address, indexed by ID.
+	// The ID can be either:
+	// 1) A reference to service: id.Name contains both the service name and
+	// the target IP and port (see newServiceRefAddress)
+	// 2) A reference to a pod: id.Name refers to the pod's name, and
+	// id.IPFamily refers to the ES AddressType (see newPodRefAddress).
+	// 3) A reference to an ExternalWorkload: id.Name refers to the EW's name.
 	AddressSet struct {
 		Addresses          map[ID]Address
 		Labels             map[string]string
@@ -275,7 +281,7 @@ func (ew *EndpointsWatcher) Unsubscribe(id ServiceID, port Port, hostname string
 	sp.unsubscribe(port, hostname, listener)
 }
 
-// removeHanders will de-register any event handlers used by the
+// removeHandlers will de-register any event handlers used by the
 // EndpointsWatcher's informers.
 func (ew *EndpointsWatcher) removeHandlers() {
 	ew.Lock()
@@ -365,7 +371,7 @@ func (ew *EndpointsWatcher) addEndpoints(obj interface{}) {
 		return
 	}
 
-	id := ServiceID{endpoints.Namespace, endpoints.Name}
+	id := ServiceID{Namespace: endpoints.Namespace, Name: endpoints.Name}
 	sp := ew.getOrNewServicePublisher(id)
 	sp.updateEndpoints(endpoints)
 }
@@ -389,7 +395,7 @@ func (ew *EndpointsWatcher) updateEndpoints(oldObj interface{}, newObj interface
 		endpointsInformerLag.Observe(delta.Seconds())
 	}
 
-	id := ServiceID{newEndpoints.Namespace, newEndpoints.Name}
+	id := ServiceID{Namespace: newEndpoints.Namespace, Name: newEndpoints.Name}
 	sp := ew.getOrNewServicePublisher(id)
 	sp.updateEndpoints(newEndpoints)
 }
@@ -542,15 +548,28 @@ func (ew *EndpointsWatcher) updateServer(oldObj interface{}, newObj interface{})
 
 	oldServer := oldObj.(*v1beta2.Server)
 	newServer := newObj.(*v1beta2.Server)
-	oldUpdated := latestUpdated(oldServer.ManagedFields)
-	updated := latestUpdated(newServer.ManagedFields)
-	if !updated.IsZero() && updated != oldUpdated {
-		delta := time.Since(updated)
-		serverInformerLag.Observe(delta.Seconds())
+	if oldServer != nil && newServer != nil {
+		oldUpdated := latestUpdated(oldServer.ManagedFields)
+		updated := latestUpdated(newServer.ManagedFields)
+		if !updated.IsZero() && updated != oldUpdated {
+			delta := time.Since(updated)
+			serverInformerLag.Observe(delta.Seconds())
+		}
 	}
 
-	for _, sp := range ew.publishers {
-		sp.updateServer(oldServer, newServer)
+	namespace := ""
+	if oldServer != nil {
+		namespace = oldServer.GetNamespace()
+	}
+	if newServer != nil {
+		namespace = newServer.GetNamespace()
+	}
+
+	for id, sp := range ew.publishers {
+		// Servers may only select workloads in their namespace.
+		if id.Namespace == namespace {
+			sp.updateServer(oldServer, newServer)
+		}
 	}
 }
 
@@ -588,7 +607,8 @@ func (sp *servicePublisher) deleteEndpoints() {
 func (sp *servicePublisher) addEndpointSlice(newSlice *discovery.EndpointSlice) {
 	sp.Lock()
 	defer sp.Unlock()
-	sp.log.Debugf("Adding EndpointSlice for %s", sp.id)
+
+	sp.log.Debugf("Adding ES %s/%s", newSlice.Namespace, newSlice.Name)
 	for _, port := range sp.ports {
 		port.addEndpointSlice(newSlice)
 	}
@@ -597,7 +617,8 @@ func (sp *servicePublisher) addEndpointSlice(newSlice *discovery.EndpointSlice) 
 func (sp *servicePublisher) updateEndpointSlice(oldSlice *discovery.EndpointSlice, newSlice *discovery.EndpointSlice) {
 	sp.Lock()
 	defer sp.Unlock()
-	sp.log.Debugf("Updating EndpointSlice for %s", sp.id)
+
+	sp.log.Debugf("Updating ES %s/%s", oldSlice.Namespace, oldSlice.Name)
 	for _, port := range sp.ports {
 		port.updateEndpointSlice(oldSlice, newSlice)
 	}
@@ -606,7 +627,8 @@ func (sp *servicePublisher) updateEndpointSlice(oldSlice *discovery.EndpointSlic
 func (sp *servicePublisher) deleteEndpointSlice(es *discovery.EndpointSlice) {
 	sp.Lock()
 	defer sp.Unlock()
-	sp.log.Debugf("Deleting EndpointSlice for %s", sp.id)
+
+	sp.log.Debugf("Deleting ES %s/%s", es.Namespace, es.Name)
 	for _, port := range sp.ports {
 		port.deleteEndpointSlice(es)
 	}
@@ -913,12 +935,18 @@ func (pp *portPublisher) endpointSliceToAddresses(es *discovery.EndpointSlice) A
 
 		if endpoint.TargetRef.Kind == endpointTargetRefPod {
 			for _, IPAddr := range endpoint.Addresses {
-				address, id, err := pp.newPodRefAddress(resolvedPort, IPAddr, endpoint.TargetRef.Name, endpoint.TargetRef.Namespace)
+				address, id, err := pp.newPodRefAddress(
+					resolvedPort,
+					es.AddressType,
+					IPAddr,
+					endpoint.TargetRef.Name,
+					endpoint.TargetRef.Namespace,
+				)
 				if err != nil {
 					pp.log.Errorf("Unable to create new address:%v", err)
 					continue
 				}
-				err = SetToServerProtocol(pp.k8sAPI, &address, resolvedPort)
+				err = SetToServerProtocol(pp.k8sAPI, &address)
 				if err != nil {
 					pp.log.Errorf("failed to set address OpaqueProtocol: %s", err)
 					continue
@@ -942,7 +970,7 @@ func (pp *portPublisher) endpointSliceToAddresses(es *discovery.EndpointSlice) A
 					continue
 				}
 
-				err = SetToServerProtocolExternalWorkload(pp.k8sAPI, &address, resolvedPort)
+				err = SetToServerProtocolExternalWorkload(pp.k8sAPI, &address)
 				if err != nil {
 					pp.log.Errorf("failed to set address OpaqueProtocol: %s", err)
 					continue
@@ -1010,6 +1038,7 @@ func (pp *portPublisher) endpointSliceToIDs(es *discovery.EndpointSlice) []ID {
 			ids = append(ids, PodID{
 				Name:      endpoint.TargetRef.Name,
 				Namespace: endpoint.TargetRef.Namespace,
+				IPFamily:  corev1.IPFamily(es.AddressType),
 			})
 		} else if endpoint.TargetRef.Kind == endpointTargetRefExternalWorkload {
 			ids = append(ids, ExternalWorkloadID{
@@ -1049,12 +1078,18 @@ func (pp *portPublisher) endpointsToAddresses(endpoints *corev1.Endpoints) Addre
 			}
 
 			if endpoint.TargetRef.Kind == endpointTargetRefPod {
-				address, id, err := pp.newPodRefAddress(resolvedPort, endpoint.IP, endpoint.TargetRef.Name, endpoint.TargetRef.Namespace)
+				address, id, err := pp.newPodRefAddress(
+					resolvedPort,
+					"",
+					endpoint.IP,
+					endpoint.TargetRef.Name,
+					endpoint.TargetRef.Namespace,
+				)
 				if err != nil {
 					pp.log.Errorf("Unable to create new address:%v", err)
 					continue
 				}
-				err = SetToServerProtocol(pp.k8sAPI, &address, resolvedPort)
+				err = SetToServerProtocol(pp.k8sAPI, &address)
 				if err != nil {
 					pp.log.Errorf("failed to set address OpaqueProtocol: %s", err)
 					continue
@@ -1082,10 +1117,17 @@ func (pp *portPublisher) newServiceRefAddress(endpointPort Port, endpointIP, ser
 	return Address{IP: endpointIP, Port: endpointPort}, id
 }
 
-func (pp *portPublisher) newPodRefAddress(endpointPort Port, endpointIP, podName, podNamespace string) (Address, PodID, error) {
+func (pp *portPublisher) newPodRefAddress(
+	endpointPort Port,
+	ipFamily discovery.AddressType,
+	endpointIP,
+	podName,
+	podNamespace string,
+) (Address, PodID, error) {
 	id := PodID{
 		Name:      podName,
 		Namespace: podNamespace,
+		IPFamily:  corev1.IPFamily(ipFamily),
 	}
 	pod, err := pp.k8sAPI.Pod().Lister().Pods(id.Namespace).Get(id.Name)
 	if err != nil {
@@ -1449,12 +1491,12 @@ func getEndpointSliceServiceID(es *discovery.EndpointSlice) (ServiceID, error) {
 	}
 
 	if svc, ok := es.Labels[discovery.LabelServiceName]; ok {
-		return ServiceID{es.Namespace, svc}, nil
+		return ServiceID{Namespace: es.Namespace, Name: svc}, nil
 	}
 
 	for _, ref := range es.OwnerReferences {
 		if ref.Kind == "Service" && ref.Name != "" {
-			return ServiceID{es.Namespace, ref.Name}, nil
+			return ServiceID{Namespace: es.Namespace, Name: ref.Name}, nil
 		}
 	}
 
@@ -1474,7 +1516,7 @@ func isValidSlice(es *discovery.EndpointSlice) bool {
 
 // SetToServerProtocol sets the address's OpaqueProtocol field based off any
 // Servers that select it and override the expected protocol.
-func SetToServerProtocol(k8sAPI *k8s.API, address *Address, port Port) error {
+func SetToServerProtocol(k8sAPI *k8s.API, address *Address) error {
 	if address.Pod == nil {
 		return fmt.Errorf("endpoint not backed by Pod: %s:%d", address.IP, address.Port)
 	}
@@ -1491,13 +1533,13 @@ func SetToServerProtocol(k8sAPI *k8s.API, address *Address, port Port) error {
 			var portMatch bool
 			switch server.Spec.Port.Type {
 			case intstr.Int:
-				if server.Spec.Port.IntVal == int32(port) {
+				if server.Spec.Port.IntVal == int32(address.Port) {
 					portMatch = true
 				}
 			case intstr.String:
 				for _, c := range address.Pod.Spec.Containers {
 					for _, p := range c.Ports {
-						if (p.ContainerPort == int32(port) || p.HostPort == int32(port)) &&
+						if (p.ContainerPort == int32(address.Port) || p.HostPort == int32(address.Port)) &&
 							p.Name == server.Spec.Port.StrVal {
 							portMatch = true
 						}
@@ -1517,7 +1559,7 @@ func SetToServerProtocol(k8sAPI *k8s.API, address *Address, port Port) error {
 
 // setToServerProtocolExternalWorkload sets the address's OpaqueProtocol field based off any
 // Servers that select it and override the expected protocol for ExternalWorkloads.
-func SetToServerProtocolExternalWorkload(k8sAPI *k8s.API, address *Address, port Port) error {
+func SetToServerProtocolExternalWorkload(k8sAPI *k8s.API, address *Address) error {
 	if address.ExternalWorkload == nil {
 		return fmt.Errorf("endpoint not backed by ExternalWorkload: %s:%d", address.IP, address.Port)
 	}
@@ -1534,12 +1576,12 @@ func SetToServerProtocolExternalWorkload(k8sAPI *k8s.API, address *Address, port
 			var portMatch bool
 			switch server.Spec.Port.Type {
 			case intstr.Int:
-				if server.Spec.Port.IntVal == int32(port) {
+				if server.Spec.Port.IntVal == int32(address.Port) {
 					portMatch = true
 				}
 			case intstr.String:
 				for _, p := range address.ExternalWorkload.Spec.Ports {
-					if p.Port == int32(port) && p.Name == server.Spec.Port.StrVal {
+					if p.Port == int32(address.Port) && p.Name == server.Spec.Port.StrVal {
 						portMatch = true
 					}
 

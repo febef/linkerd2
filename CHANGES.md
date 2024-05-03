@@ -1,5 +1,62 @@
 # Changes
 
+Please visit Linkerd's [Release page][gh-releases] for for the latest release
+notes moving forward!
+
+[gh-releases]: https://github.com/linkerd/linkerd2/releases
+
+## edge-24.2.5
+
+* Migrated edge release change notes to use GitHub's automated release notes
+  feature.
+
+## edge-24.2.4
+
+* Updated the ExternalWorkload CRD to v1beta1, renaming the meshTls field to
+  meshTLS ([#12098])
+* Updated the proxy to address some logging and metrics inconsistencies
+  ([#12099])
+
+[#12098]: https://github.com/linkerd/linkerd2/pull/12098
+[#12099]: https://github.com/linkerd/linkerd2/pull/12099
+
+## edge-24.2.3
+
+* Allowed the `MutatingWebhookConfig` timeout value to be configured ([#12028])
+  (thanks @mikebell90)
+* Added a counter for items dropped from destination controller workqueue
+  ([#12079])
+* Fixed a spurious `linkerd check` error when using container images with
+  digests ([#12059])
+* Fixed an issue where inbound policy could be incorrect after certain policy
+  resources are deleted ([#12088])
+
+[#12028]: https://github.com/linkerd/linkerd2/pull/12028
+[#12079]: https://github.com/linkerd/linkerd2/pull/12079
+[#12059]: https://github.com/linkerd/linkerd2/pull/12059
+[#12088]: https://github.com/linkerd/linkerd2/pull/12088
+
+## edge-24.2.2
+
+This release addresses some issues in the destination service that could cause
+it to behave unexpectedly when processing updates.
+
+* Fixed a race condition in the destination service that could cause panics
+  under very specific conditions ([#12022]; fixes [#12010])
+* Changed how updates to a `Server` selector are handled in the destination
+  service. When a `Server` that marks a port as opaque no longer selects a
+  resource, the resource's opaqueness will reverted to default settings
+  ([#12031]; fixes [#11995])
+* Introduced Helm configuration values for liveness and readiness probe
+  timeouts and delays ([#11458]; fixes [#11453]) (thanks @jan-kantert!)
+
+[#12010]: https://github.com/linkerd/linkerd2/issues/12010
+[#12022]: https://github.com/linkerd/linkerd2/pull/12022
+[#11995]: https://github.com/linkerd/linkerd2/issues/11995
+[#12031]: https://github.com/linkerd/linkerd2/pull/12031
+[#11453]: https://github.com/linkerd/linkerd2/issues/11453
+[#11458]: https://github.com/linkerd/linkerd2/pull/11458
+
 ## edge-24.2.1
 
 This edge release contains performance and stability improvements to the

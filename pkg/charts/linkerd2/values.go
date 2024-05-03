@@ -33,6 +33,7 @@ type (
 		EnablePodAntiAffinity        bool                   `json:"enablePodAntiAffinity"`
 		NodeAffinity                 map[string]interface{} `json:"nodeAffinity"`
 		EnablePodDisruptionBudget    bool                   `json:"enablePodDisruptionBudget"`
+		Controller                   *Controller            `json:"controller"`
 		WebhookFailurePolicy         string                 `json:"webhookFailurePolicy"`
 		DeploymentStrategy           map[string]interface{} `json:"deploymentStrategy,omitempty"`
 		DisableHeartBeat             bool                   `json:"disableHeartBeat"`
@@ -48,6 +49,7 @@ type (
 		HighAvailability             bool                   `json:"highAvailability"`
 		CNIEnabled                   bool                   `json:"cniEnabled"`
 		EnableEndpointSlices         bool                   `json:"enableEndpointSlices"`
+		DisableIPv6                  bool                   `json:"disableIPv6"`
 		ControlPlaneTracing          bool                   `json:"controlPlaneTracing"`
 		ControlPlaneTracingNamespace string                 `json:"controlPlaneTracingNamespace"`
 		IdentityTrustAnchorsPEM      string                 `json:"identityTrustAnchorsPEM"`
@@ -55,6 +57,11 @@ type (
 		PrometheusURL                string                 `json:"prometheusUrl"`
 		ImagePullSecrets             []map[string]string    `json:"imagePullSecrets"`
 		LinkerdVersion               string                 `json:"linkerdVersion"`
+		RevisionHistoryLimit         uint                   `json:"revisionHistoryLimit"`
+
+		DestinationController map[string]interface{} `json:"destinationController"`
+		Heartbeat             map[string]interface{} `json:"heartbeat"`
+		SPValidator           map[string]interface{} `json:"spValidator"`
 
 		PodAnnotations    map[string]string `json:"podAnnotations"`
 		PodLabels         map[string]string `json:"podLabels"`
@@ -67,7 +74,7 @@ type (
 		NetworkValidator *NetworkValidator `json:"networkValidator"`
 		Identity         *Identity         `json:"identity"`
 		DebugContainer   *DebugContainer   `json:"debugContainer"`
-		ProxyInjector    *Webhook          `json:"proxyInjector"`
+		ProxyInjector    *ProxyInjector    `json:"proxyInjector"`
 		ProfileValidator *Webhook          `json:"profileValidator"`
 		PolicyValidator  *Webhook          `json:"policyValidator"`
 		NodeSelector     map[string]string `json:"nodeSelector"`
@@ -81,6 +88,16 @@ type (
 		DestinationProxyResources   *Resources `json:"destinationProxyResources"`
 		IdentityProxyResources      *Resources `json:"identityProxyResources"`
 		ProxyInjectorProxyResources *Resources `json:"proxyInjectorProxyResources"`
+	}
+
+	// Controller contains the fields to set the controller container
+	Controller struct {
+		PodDisruptionBudget *PodDisruptionBudget `json:"podDisruptionBudget"`
+	}
+
+	// PodDisruptionBudget contains the fields to set the PDB
+	PodDisruptionBudget struct {
+		MaxUnavailable int `json:"maxUnavailable"`
 	}
 
 	// ConfigJSONs is the JSON encoding of the Linkerd configuration
@@ -121,10 +138,20 @@ type (
 		ShutdownGracePeriod                  string           `json:"shutdownGracePeriod"`
 		NativeSidecar                        bool             `json:"nativeSidecar"`
 		StartupProbe                         *StartupProbe    `json:"startupProbe"`
+		ReadinessProbe                       *Probe           `json:"readinessProbe"`
+		LivenessProbe                        *Probe           `json:"livenessProbe"`
 		Control                              *ProxyControl    `json:"control"`
 
+		AdditionalEnv   []corev1.EnvVar `json:"additionalEnv"`
 		ExperimentalEnv []corev1.EnvVar `json:"experimentalEnv"`
+
+		Inbound  ProxyParams `json:"inbound,omitempty"`
+		Outbound ProxyParams `json:"outbound,omitempty"`
 	}
+
+	ProxyParams      = map[string]ProxyScopeParams
+	ProxyScopeParams = map[string]ProxyProtoParams
+	ProxyProtoParams = map[string]interface{}
 
 	ProxyControl struct {
 		Streams *ProxyControlStreams `json:"streams"`
@@ -214,6 +241,11 @@ type (
 		Outbound int32 `json:"outbound"`
 	}
 
+	Probe struct {
+		InitialDelaySeconds uint `json:"initialDelaySeconds"`
+		TimeoutSeconds      uint `json:"timeoutSeconds"`
+	}
+
 	// Constraints wraps the Limit and Request settings for computational resources
 	Constraints struct {
 		Limit   string `json:"limit"`
@@ -255,6 +287,9 @@ type (
 		ServiceAccountTokenProjection bool     `json:"serviceAccountTokenProjection"`
 		Issuer                        *Issuer  `json:"issuer"`
 		KubeAPI                       *KubeAPI `json:"kubeAPI"`
+
+		AdditionalEnv   []corev1.EnvVar `json:"additionalEnv"`
+		ExperimentalEnv []corev1.EnvVar `json:"experimentalEnv"`
 	}
 
 	// Issuer has the Helm variables of the identity issuer
@@ -269,6 +304,13 @@ type (
 	KubeAPI struct {
 		ClientQPS   float32 `json:"clientQPS"`
 		ClientBurst int     `json:"clientBurst"`
+	}
+
+	// ProxyInjector configures the proxy-injector webhook
+	ProxyInjector struct {
+		Webhook
+		AdditionalEnv   []corev1.EnvVar `json:"additionalEnv"`
+		ExperimentalEnv []corev1.EnvVar `json:"experimentalEnv"`
 	}
 
 	// Webhook Helm variables for a webhook

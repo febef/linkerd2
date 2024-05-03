@@ -25,6 +25,8 @@ gateway:
   serviceAnnotations: {}
   # -- Annotations to add to the gateway deployment
   deploymentAnnotations: {}
+  # -- Set loadBalancerClass on gateway service
+  loadBalancerClass: ""
   # -- Set loadBalancerIP on gateway service
   loadBalancerIP: ""
   # -- Set loadBalancerSourceRanges on gateway service
@@ -102,3 +104,6 @@ enablePodAntiAffinity: false
 # -- Creates a Job that adds necessary metadata to the extension's namespace
 # during install; disable if lack of privileges require doing this manually
 createNamespaceMetadataJob: true
+
+# -- Specifies the number of old ReplicaSets to retain to allow rollback.
+revisionHistoryLimit: 10
