@@ -72,6 +72,31 @@ where
         .expect("failed to create resource")
 }
 
+/// Updates a namespace-scoped resource.
+pub async fn update<T>(client: &kube::Client, mut new: T) -> T
+where
+    T: kube::Resource<Scope = kube::core::NamespaceResourceScope>,
+    T: serde::Serialize + serde::de::DeserializeOwned + Clone + std::fmt::Debug,
+    T::DynamicType: Default,
+{
+    let params = kube::api::PostParams {
+        field_manager: Some("linkerd-policy-test".to_string()),
+        ..Default::default()
+    };
+    let api = new
+        .namespace()
+        .map(|ns| kube::Api::<T>::namespaced(client.clone(), &ns))
+        .unwrap_or_else(|| kube::Api::<T>::default_namespaced(client.clone()));
+
+    let old = api.get_metadata(&new.name_unchecked()).await.unwrap();
+
+    new.meta_mut().resource_version = old.resource_version();
+    tracing::trace!(?new, "Updating");
+    api.replace(&new.name_unchecked(), &params, &new)
+        .await
+        .expect("failed to create resource")
+}
+
 pub async fn await_condition<T>(
     client: &kube::Client,
     ns: &str,
@@ -173,7 +198,12 @@ pub async fn await_route_status(
 // Wait for the endpoints controller to populate the Endpoints resource.
 pub fn endpoints_ready(obj: Option<&k8s::Endpoints>) -> bool {
     if let Some(ep) = obj {
-        return ep.subsets.iter().flatten().count() > 0;
+        return ep
+            .subsets
+            .iter()
+            .flatten()
+            .flat_map(|s| &s.addresses)
+            .any(|a| !a.is_empty());
     }
     false
 }

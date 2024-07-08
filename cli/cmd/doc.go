@@ -209,6 +209,10 @@ func generateAnnotationsDocs() []annotationDoc {
 			Description: "Run the proxy under this user ID",
 		},
 		{
+			Name:        k8s.ProxyGIDAnnotation,
+			Description: "Run the proxy under this group ID",
+		},
+		{
 			Name:        k8s.ProxyLogLevelAnnotation,
 			Description: "Log level for the proxy",
 		},
@@ -238,11 +242,11 @@ func generateAnnotationsDocs() []annotationDoc {
 		},
 		{
 			Name:        k8s.ProxyOutboundConnectTimeout,
-			Description: "Used to configure the outbound TCP connection timeout in the proxy",
+			Description: "Used to configure the outbound TCP connection timeout in the proxy. Defaults to `1000ms`",
 		},
 		{
 			Name:        k8s.ProxyInboundConnectTimeout,
-			Description: "Inbound TCP connection timeout in the proxy",
+			Description: "Inbound TCP connection timeout in the proxy. Defaults to `100ms`",
 		},
 		{
 			Name:        k8s.ProxyOutboundDiscoveryCacheUnusedTimeout,

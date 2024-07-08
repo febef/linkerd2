@@ -2,6 +2,7 @@ package destination
 
 import (
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -11,9 +12,10 @@ import (
 	pb "github.com/linkerd/linkerd2-proxy-api/go/destination"
 	"github.com/linkerd/linkerd2-proxy-api/go/net"
 	"github.com/linkerd/linkerd2/controller/api/destination/watcher"
-	ewv1alpha1 "github.com/linkerd/linkerd2/controller/gen/apis/externalworkload/v1alpha1"
+	ewv1beta1 "github.com/linkerd/linkerd2/controller/gen/apis/externalworkload/v1beta1"
 	"github.com/linkerd/linkerd2/pkg/addr"
 	"github.com/linkerd/linkerd2/pkg/k8s"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,6 +24,26 @@ import (
 var (
 	pod1 = watcher.Address{
 		IP:   "1.1.1.1",
+		Port: 1,
+		Pod: &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pod1",
+				Namespace: "ns",
+				Labels: map[string]string{
+					k8s.ControllerNSLabel:    "linkerd",
+					k8s.ProxyDeploymentLabel: "deployment-name",
+				},
+			},
+			Spec: corev1.PodSpec{
+				ServiceAccountName: "serviceaccount-name",
+			},
+		},
+		OwnerKind: "replicationcontroller",
+		OwnerName: "rc-name",
+	}
+
+	pod1IPv6 = watcher.Address{
+		IP:   "2001:0db8:85a3:0000:0000:8a2e:0370:7333",
 		Port: 1,
 		Pod: &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -56,7 +78,7 @@ var (
 	}
 
 	pod3 = watcher.Address{
-		IP:   "1.1.1.3",
+		IP:   "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
 		Port: 3,
 		Pod: &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -105,13 +127,13 @@ var (
 	ew1 = watcher.Address{
 		IP:   "1.1.1.1",
 		Port: 1,
-		ExternalWorkload: &ewv1alpha1.ExternalWorkload{
+		ExternalWorkload: &ewv1beta1.ExternalWorkload{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "ew-1",
 				Namespace: "ns",
 			},
-			Spec: ewv1alpha1.ExternalWorkloadSpec{
-				MeshTls: ewv1alpha1.MeshTls{
+			Spec: ewv1beta1.ExternalWorkloadSpec{
+				MeshTLS: ewv1beta1.MeshTLS{
 					Identity:   "spiffe://some-domain/ew-1",
 					ServerName: "server.local",
 				},
@@ -124,7 +146,7 @@ var (
 	ew2 = watcher.Address{
 		IP:   "1.1.1.2",
 		Port: 2,
-		ExternalWorkload: &ewv1alpha1.ExternalWorkload{
+		ExternalWorkload: &ewv1beta1.ExternalWorkload{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "ew-2",
 				Namespace: "ns",
@@ -133,8 +155,8 @@ var (
 					k8s.ProxyDeploymentLabel: "deployment-name",
 				},
 			},
-			Spec: ewv1alpha1.ExternalWorkloadSpec{
-				MeshTls: ewv1alpha1.MeshTls{
+			Spec: ewv1beta1.ExternalWorkloadSpec{
+				MeshTLS: ewv1beta1.MeshTLS{
 					Identity:   "spiffe://some-domain/ew-2",
 					ServerName: "server.local",
 				},
@@ -145,7 +167,7 @@ var (
 	ew3 = watcher.Address{
 		IP:   "1.1.1.3",
 		Port: 3,
-		ExternalWorkload: &ewv1alpha1.ExternalWorkload{
+		ExternalWorkload: &ewv1beta1.ExternalWorkload{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "ew-3",
 				Namespace: "ns",
@@ -154,8 +176,8 @@ var (
 					k8s.ProxyDeploymentLabel: "deployment-name",
 				},
 			},
-			Spec: ewv1alpha1.ExternalWorkloadSpec{
-				MeshTls: ewv1alpha1.MeshTls{
+			Spec: ewv1beta1.ExternalWorkloadSpec{
+				MeshTLS: ewv1beta1.MeshTLS{
 					Identity:   "spiffe://some-domain/ew-3",
 					ServerName: "server.local",
 				},
@@ -166,7 +188,7 @@ var (
 	ewOpaque = watcher.Address{
 		IP:   "1.1.1.4",
 		Port: 4,
-		ExternalWorkload: &ewv1alpha1.ExternalWorkload{
+		ExternalWorkload: &ewv1beta1.ExternalWorkload{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "pod4",
 				Namespace: "ns",
@@ -174,13 +196,13 @@ var (
 					k8s.ProxyOpaquePortsAnnotation: "4",
 				},
 			},
-			Spec: ewv1alpha1.ExternalWorkloadSpec{
-				MeshTls: ewv1alpha1.MeshTls{
+			Spec: ewv1beta1.ExternalWorkloadSpec{
+				MeshTLS: ewv1beta1.MeshTLS{
 					Identity:   "spiffe://some-domain/ew-opaque",
 					ServerName: "server.local",
 				},
 
-				Ports: []ewv1alpha1.PortSpec{
+				Ports: []ewv1beta1.PortSpec{
 					{
 						Port: 4143,
 						Name: "linkerd-proxy",
@@ -399,8 +421,8 @@ func TestEndpointTranslatorForPods(t *testing.T) {
 		translator.Start()
 		defer translator.Stop()
 
-		translator.Add(mkAddressSetForPods(pod1, pod2))
-		translator.Remove(mkAddressSetForPods(pod2))
+		translator.Add(mkAddressSetForPods(t, pod1, pod2))
+		translator.Remove(mkAddressSetForPods(t, pod2))
 
 		expectedNumUpdates := 2
 		<-mockGetServer.updatesReceived // Add
@@ -416,8 +438,8 @@ func TestEndpointTranslatorForPods(t *testing.T) {
 		translator.Start()
 		defer translator.Stop()
 
-		translator.Add(mkAddressSetForPods(pod1, pod2, pod3))
-		translator.Remove(mkAddressSetForPods(pod3))
+		translator.Add(mkAddressSetForPods(t, pod1, pod2, pod3))
+		translator.Remove(mkAddressSetForPods(t, pod3))
 
 		addressesAdded := (<-mockGetServer.updatesReceived).GetAdd().Addrs
 		actualNumberOfAdded := len(addressesAdded)
@@ -446,7 +468,7 @@ func TestEndpointTranslatorForPods(t *testing.T) {
 		translator.Start()
 		defer translator.Stop()
 
-		translator.Add(mkAddressSetForPods(pod1))
+		translator.Add(mkAddressSetForPods(t, pod1))
 
 		update := <-mockGetServer.updatesReceived
 
@@ -478,7 +500,7 @@ func TestEndpointTranslatorForPods(t *testing.T) {
 		translator.Start()
 		defer translator.Stop()
 
-		translator.Add(mkAddressSetForPods(pod1))
+		translator.Add(mkAddressSetForPods(t, pod1))
 
 		addrs := (<-mockGetServer.updatesReceived).GetAdd().GetAddrs()
 		if len(addrs) != 1 {
@@ -515,6 +537,56 @@ func TestEndpointTranslatorForPods(t *testing.T) {
 		actualProtocolHint := addrs[0].GetProtocolHint()
 		if diff := deep.Equal(actualProtocolHint, expectedProtocolHint); diff != nil {
 			t.Fatalf("ProtocolHint: %v", diff)
+		}
+	})
+
+	t.Run("Sends IPv6 only when pod has both IPv4 and IPv6", func(t *testing.T) {
+		mockGetServer, translator := makeEndpointTranslator(t)
+		translator.Start()
+		defer translator.Stop()
+
+		translator.Add(mkAddressSetForPods(t, pod1, pod1IPv6))
+
+		addrs := (<-mockGetServer.updatesReceived).GetAdd().GetAddrs()
+		if len(addrs) != 1 {
+			t.Fatalf("Expected [1] address returned, got %v", addrs)
+		}
+		if ipPort := addr.ProxyAddressToString(addrs[0].GetAddr()); ipPort != "[2001:db8:85a3::8a2e:370:7333]:1" {
+			t.Fatalf("Expected address to be [%s], got [%s]", "[2001:db8:85a3::8a2e:370:7333]:1", ipPort)
+		}
+
+		if updates := len(mockGetServer.updatesReceived); updates > 0 {
+			t.Fatalf("Expected to receive no more messages, received [%d]", updates)
+		}
+	})
+
+	t.Run("Sends IPv4 only when pod has both IPv4 and IPv6 but the latter in another zone ", func(t *testing.T) {
+		mockGetServer, translator := makeEndpointTranslator(t)
+		translator.Start()
+		defer translator.Stop()
+
+		pod1West1a := pod1
+		pod1West1a.ForZones = []v1.ForZone{
+			{Name: "west-1a"},
+		}
+
+		pod1IPv6West1b := pod1IPv6
+		pod1IPv6West1b.ForZones = []v1.ForZone{
+			{Name: "west-1b"},
+		}
+
+		translator.Add(mkAddressSetForPods(t, pod1West1a, pod1IPv6West1b))
+
+		addrs := (<-mockGetServer.updatesReceived).GetAdd().GetAddrs()
+		if len(addrs) != 1 {
+			t.Fatalf("Expected [1] address returned, got %v", addrs)
+		}
+		if ipPort := addr.ProxyAddressToString(addrs[0].GetAddr()); ipPort != "1.1.1.1:1" {
+			t.Fatalf("Expected address to be [%s], got [%s]", "1.1.1.1:1", ipPort)
+		}
+
+		if updates := len(mockGetServer.updatesReceived); updates > 0 {
+			t.Fatalf("Expected to receive no more messages, received [%d]", updates)
 		}
 	})
 }
@@ -686,7 +758,7 @@ func TestEndpointTranslatorExperimentalZoneWeights(t *testing.T) {
 
 	t.Run("Disabled", func(t *testing.T) {
 		mockGetServer, translator := makeEndpointTranslator(t)
-		translator.experimentalEndpointZoneWeights = false
+		translator.extEndpointZoneWeights = false
 		translator.Start()
 		defer translator.Stop()
 
@@ -705,7 +777,7 @@ func TestEndpointTranslatorExperimentalZoneWeights(t *testing.T) {
 
 	t.Run("Applies weights", func(t *testing.T) {
 		mockGetServer, translator := makeEndpointTranslator(t)
-		translator.experimentalEndpointZoneWeights = true
+		translator.extEndpointZoneWeights = true
 		translator.Start()
 		defer translator.Stop()
 
@@ -743,6 +815,31 @@ func TestEndpointTranslatorForLocalTrafficPolicy(t *testing.T) {
 			t.Fatalf("Expecting [%d] updates, got [%d].", expectedNumUpdates, expectedNumUpdates+len(mockGetServer.updatesReceived))
 		}
 	})
+
+	t.Run("Removes cannot change LocalTrafficPolicy", func(t *testing.T) {
+		mockGetServer, translator := makeEndpointTranslator(t)
+		translator.Start()
+		defer translator.Stop()
+		addressSet := mkAddressSetForServices(AddressOnTest123Node, AddressNotOnTest123Node)
+		addressSet.LocalTrafficPolicy = true
+		translator.Add(addressSet)
+		set := watcher.AddressSet{
+			Addresses:          make(map[watcher.ServiceID]watcher.Address),
+			Labels:             map[string]string{"service": "service-name", "namespace": "service-ns"},
+			LocalTrafficPolicy: false,
+		}
+		translator.Remove(set)
+
+		// Only the address meant for AddressOnTest123Node should be added.
+		// The remove with no addresses should not change the LocalTrafficPolicy
+		// and should be a noop that does not send an update.
+		expectedNumUpdates := 1
+		<-mockGetServer.updatesReceived // Add
+
+		if len(mockGetServer.updatesReceived) != 0 {
+			t.Fatalf("Expecting [%d] updates, got [%d].", expectedNumUpdates, expectedNumUpdates+len(mockGetServer.updatesReceived))
+		}
+	})
 }
 
 // TestConcurrency, to be triggered with `go test -race`, shouldn't report a race condition
@@ -764,6 +861,39 @@ func TestConcurrency(t *testing.T) {
 	wg.Wait()
 }
 
+func TestGetInboundPort(t *testing.T) {
+	podSpec := &corev1.PodSpec{
+		Containers: []corev1.Container{
+			{
+				Name: k8s.ProxyContainerName,
+				Env: []corev1.EnvVar{
+					{
+						Name:  envInboundListenAddr,
+						Value: "1.2.3.4:8080",
+					},
+				},
+			},
+		},
+	}
+
+	port, err := getInboundPort(podSpec)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	if port != 8080 {
+		t.Fatalf("Expecting port [%d], got [%d]", 8080, port)
+	}
+
+	podSpec.Containers[0].Env[0].Value = "[2001:db8::94]:8080"
+	port, err = getInboundPort(podSpec)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	if port != 8080 {
+		t.Fatalf("Expecting port [%d], got [%d]", 8080, port)
+	}
+}
+
 func mkAddressSetForServices(gatewayAddresses ...watcher.Address) watcher.AddressSet {
 	set := watcher.AddressSet{
 		Addresses: make(map[watcher.ServiceID]watcher.Address),
@@ -783,13 +913,30 @@ func mkAddressSetForServices(gatewayAddresses ...watcher.Address) watcher.Addres
 	return set
 }
 
-func mkAddressSetForPods(podAddresses ...watcher.Address) watcher.AddressSet {
+func mkAddressSetForPods(t *testing.T, podAddresses ...watcher.Address) watcher.AddressSet {
+	t.Helper()
+
 	set := watcher.AddressSet{
 		Addresses: make(map[watcher.PodID]watcher.Address),
 		Labels:    map[string]string{"service": "service-name", "namespace": "service-ns"},
 	}
 	for _, p := range podAddresses {
-		id := watcher.PodID{Name: p.Pod.Name, Namespace: p.Pod.Namespace}
+		// The IP family is set on the PodID used to index the
+		// watcher.Address; here we simply detect it
+		fam := corev1.IPv4Protocol
+		addr, err := netip.ParseAddr(p.IP)
+		if err != nil {
+			t.Fatalf("Invalid IP '%s': %s", p.IP, err)
+		}
+		if addr.Is6() {
+			fam = corev1.IPv6Protocol
+		}
+
+		id := watcher.PodID{
+			Name:      p.Pod.Name,
+			Namespace: p.Pod.Namespace,
+			IPFamily:  fam,
+		}
 		set.Addresses[id] = p
 	}
 	return set
@@ -819,7 +966,7 @@ func checkAddressAndWeight(t *testing.T, actual *pb.WeightedAddr, expected watch
 func checkAddress(t *testing.T, actual *net.TcpAddress, expected watcher.Address) {
 	t.Helper()
 
-	expectedAddr, err := addr.ParseProxyIPV4(expected.IP)
+	expectedAddr, err := addr.ParseProxyIP(expected.IP)
 	expectedTCP := net.TcpAddress{
 		Ip:   expectedAddr,
 		Port: expected.Port,
@@ -827,11 +974,14 @@ func checkAddress(t *testing.T, actual *net.TcpAddress, expected watcher.Address
 	if err != nil {
 		t.Fatalf("Failed to parse expected IP [%s]: %s", expected.IP, err)
 	}
-	if actual.Ip.GetIpv4() != expectedTCP.Ip.GetIpv4() {
-		t.Fatalf("Expected IP [%+v] but got [%+v]", expectedTCP.Ip, actual.Ip)
+	if actual.Ip.GetIpv4() == 0 && actual.Ip.GetIpv6() == nil {
+		t.Fatal("Actual IP is empty")
 	}
-	if actual.Ip.GetIpv6() != expectedTCP.Ip.GetIpv6() {
-		t.Fatalf("Expected IP [%+v] but got [%+v]", expectedTCP.Ip, actual.Ip)
+	if actual.Ip.GetIpv4() != expectedTCP.Ip.GetIpv4() {
+		t.Fatalf("Expected IPv4 [%+v] but got [%+v]", expectedTCP.Ip, actual.Ip)
+	}
+	if !proto.Equal(actual.Ip.GetIpv6(), expectedTCP.Ip.GetIpv6()) {
+		t.Fatalf("Expected IPv6 [%+v] but got [%+v]", expectedTCP.Ip, actual.Ip)
 	}
 	if actual.Port != expectedTCP.Port {
 		t.Fatalf("Expected port [%+v] but got [%+v]", expectedTCP.Port, actual.Port)

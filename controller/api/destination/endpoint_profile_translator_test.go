@@ -1,6 +1,8 @@
 package destination
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -34,11 +36,11 @@ func TestEndpointProfileTranslator(t *testing.T) {
 
 	t.Run("Sends update", func(t *testing.T) {
 		mockGetProfileServer := &mockDestinationGetProfileServer{
-			profilesReceived: make(chan *pb.DestinationProfile, 1),
+			profilesReceived: make(chan *pb.DestinationProfile), // UNBUFFERED
 		}
 		log := logging.WithField("test", t.Name())
 		translator := newEndpointProfileTranslator(
-			true, "cluster", "identity", make(map[uint32]struct{}),
+			true, "cluster", "identity", make(map[uint32]struct{}), nil,
 			mockGetProfileServer,
 			nil,
 			log,
@@ -82,13 +84,14 @@ func TestEndpointProfileTranslator(t *testing.T) {
 		log := logging.WithField("test", t.Name())
 		endStream := make(chan struct{})
 		translator := newEndpointProfileTranslator(
-			true, "cluster", "identity", make(map[uint32]struct{}),
+			true, "cluster", "identity", make(map[uint32]struct{}), nil,
 			mockGetProfileServer,
 			endStream,
 			log,
 		)
-		translator.Start()
-		defer translator.Stop()
+
+		// We avoid starting the translator so that it doesn't drain its update
+		// queue and we can test the overflow behavior.
 
 		for i := 0; i < updateQueueCapacity/2; i++ {
 			if err := translator.Update(podAddr); err != nil {
@@ -110,9 +113,14 @@ func TestEndpointProfileTranslator(t *testing.T) {
 			}
 		}
 
+		// The queue should be full and the next update should fail.
+		t.Logf("Queue length=%d capacity=%d", translator.queueLen(), updateQueueCapacity)
 		if err := translator.Update(podAddr); err == nil {
-			t.Fatal("Expected update to fail")
+			if !errors.Is(err, http.ErrServerClosed) {
+				t.Fatalf("Expected update to fail; queue=%d; capacity=%d", translator.queueLen(), updateQueueCapacity)
+			}
 		}
+
 		select {
 		case <-endStream:
 		default:

@@ -8,7 +8,7 @@ package k8s
 import (
 	"fmt"
 
-	ewv1alpha1 "github.com/linkerd/linkerd2/controller/gen/apis/externalworkload/v1alpha1"
+	ewv1beta1 "github.com/linkerd/linkerd2/controller/gen/apis/externalworkload/v1beta1"
 	"github.com/linkerd/linkerd2/pkg/version"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -206,8 +206,18 @@ const (
 	// ProxyUIDAnnotation can be used to override the UID config.
 	ProxyUIDAnnotation = ProxyConfigAnnotationsPrefix + "/proxy-uid"
 
+	// ProxyGIDAnnotation can be used to override the GID config.
+	ProxyGIDAnnotation = ProxyConfigAnnotationsPrefix + "/proxy-gid"
+
+	// ProxyAdminShutdownAnnotation can be used to override the
+	// LINKERD2_PROXY_SHUTDOWN_ENDPOINT_ENABLED config.
+	ProxyAdminShutdownAnnotation = ProxyConfigAnnotationsPrefix + "/proxy-admin-shutdown"
+
 	// ProxyLogLevelAnnotation can be used to override the log level config.
 	ProxyLogLevelAnnotation = ProxyConfigAnnotationsPrefix + "/proxy-log-level"
+
+	// ProxyLogHTTPHeaders can be used to override if the proxy is permitted to log HTTP headers.
+	ProxyLogHTTPHeaders = ProxyConfigAnnotationsPrefix + "/proxy-log-http-headers"
 
 	// ProxyLogFormatAnnotation can be used to override the log format config.
 	ProxyLogFormatAnnotation = ProxyConfigAnnotationsPrefix + "/proxy-log-format"
@@ -368,9 +378,6 @@ const (
 	// PolicyValidatorWebhookConfigName is the name of the validating webhook configuration
 	PolicyValidatorWebhookConfigName = "linkerd-policy-validator-webhook-config"
 
-	// AdmissionWebhookLabel indicates whether admission webhooks are enabled for a namespace
-	AdmissionWebhookLabel = ProxyConfigAnnotationsPrefix + "/admission-webhooks"
-
 	/*
 	 * Mount paths
 	 */
@@ -515,7 +522,7 @@ func GetPodLabels(ownerKind, ownerName string, pod *corev1.Pod) map[string]strin
 }
 
 // GetExternalWorkloadLabels returns the set of prometheus owner labels for a given ExternalWorkload
-func GetExternalWorkloadLabels(ownerKind, ownerName string, ew *ewv1alpha1.ExternalWorkload) map[string]string {
+func GetExternalWorkloadLabels(ownerKind, ownerName string, ew *ewv1beta1.ExternalWorkload) map[string]string {
 	labels := map[string]string{"external_workload": ew.Name}
 
 	if ownerKind != "" && ownerName != "" {
