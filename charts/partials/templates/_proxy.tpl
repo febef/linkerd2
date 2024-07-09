@@ -148,9 +148,9 @@ be used in other contexts.
 */}}
 {{- if .Values.proxy.loadTrustBundleFromConfigMap }}
   valueFrom:
-    configMapKeyRef:
-      name: linkerd-identity-trust-roots
-      key: ca-bundle.crt
+    secretKeyRef:
+      key: ca.crt
+      name: linkerd-trust-anchor-roots
 {{ else }}
   value: |
     {{- required "Please provide the identity trust anchors" .Values.identityTrustAnchorsPEM | trim | nindent 4 }}
